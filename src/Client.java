@@ -3,8 +3,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
-import java.sql.SQLOutput;
 import java.util.Scanner;
+
+@SuppressWarnings("Duplicates")
 
 public class Client {
 
@@ -18,24 +19,13 @@ public class Client {
     static final byte ERROR = 5;
 
     //CODES ERREUR (Voir norme RFC 1350 pour details)
-    static final byte ERROR_1 = 1;
-    static final byte ERROR_2 = 2;
-    static final byte ERROR_3 = 3;
-    static final byte ERROR_4 = 4;
-    static final byte ERROR_5 = 5;
-    static final byte ERROR_6 = 6;
-    static final byte ERROR_7 = 7;
-
-    public static void main2 (String[] args) {
-
-        byte[] RRQPacket = createPacketRRQ("Fichier.txt");
-        readRRQ(RRQPacket);
-
-        createPacketACK(6);
-        createPacketACK(0);
-        createPacketACK(3);
-        createPacketACK(201);
-    }
+    static final byte ERROR_FILE_NOT_FOUND = 1;
+    static final byte ERROR_FORBIDDEN_ACCESS = 2;
+    static final byte ERROR_DISK_FULL = 3;
+    static final byte ERROR_ILLEGAL_TFTP_OP = 4;
+    static final byte ERROR_TRANSFERT_ID_UNKNOWN = 5;
+    static final byte ERROR_FILE_ALREADY_EXISTS = 6;
+    static final byte ERROR_UNKNOWN_USER = 7;
 
     public static void main (String[] args) {
 
@@ -43,7 +33,6 @@ public class Client {
         String str;
 
         int cr_rv;
-        int port;
 
         InetAddress ipServer;
 
@@ -57,24 +46,12 @@ public class Client {
 
         int portServ = 69;
 
-        byte[] data = new byte[1024];
-
         boolean clientOn = true;
-
-        //region Initialisation Client
-        /*
-        try {
-            ds = new DatagramSocket();
-            port = ds.getLocalPort();
-        } catch (SocketException err) {
-            System.out.println("Erreur création Client !");
-            err.printStackTrace();
-            return;
-        } */
-        //endregion
 
         //Information
         System.out.println("Serveur cible : " + ipServer.toString() + " : " + portServ);
+
+
         //Boucle principale
 
         while (clientOn) {
@@ -88,7 +65,8 @@ public class Client {
             }
             else {
                 cr_rv = receivefile(str, str, ipServer, portServ);
-                System.out.println("cr_rv = " + cr_rv);
+                if ( cr_rv != 0 )
+                    messageErreur(cr_rv);
             }
 
         }
@@ -103,27 +81,23 @@ public class Client {
 
         DatagramPacket dp;
         DatagramSocket ds;
-        int ackNum = 1;
-        byte[] data;
-        byte[] datafile;
-        InetAddress ip;
         FileOutputStream fos;
 
+        int ackNum = 1;
+        int totalOctetRecu = 0;
+        int opcode;
+        byte[] data;
+
         boolean fichierRecu = false;
+
         //Creation socket
         try {
-            //ip = InetAddress.getByName(ipServ);
             ds = new DatagramSocket();
-        } catch (SocketException err) {
-            System.out.println("Erreur création socket Client !");
+        } //region gestion erreur
+        catch (SocketException err) {
             err.printStackTrace();
             return -1;
-        } /*catch (UnknownHostException err) {
-            System.out.println("Adresse IP non valide !");
-            err.printStackTrace();
-            return -2;
-        }*/
-        //endregion
+        } //endregion
 
         //On envoie la requête initiale
 
@@ -134,100 +108,176 @@ public class Client {
         //Envoie
         try {
             ds.send(dp);
-        }
+        } //region gestion erreur
         catch (IOException err) {
-            System.out.println("Erreur envoie RRQ !");
             err.printStackTrace();
             ds.close();
-            return -3;
-        }
+            return -2;
+        } //endregion
 
         //Ouverture du fichier
         try {
-            fos = new FileOutputStream(fileLocal);
-        }
+            fos = new FileOutputStream("data/" + fileLocal);
+        } //region gestion erreur
         catch (FileNotFoundException err) {
-            System.out.println("ERREUR fichier non trouvé !");
+            //System.out.println("ERREUR fichier non trouvé !");
             err.printStackTrace();
             ds.close();
-            return -6;
-        }
+            return -4;
+        } //endregion
 
         //Reception
         while ( !fichierRecu ) {
 
             try {
-                System.out.println("attente reponse");
+
+                //byte[] dataReceive = new byte[516];
+                System.out.println("Attente packet...");
                 dp = new DatagramPacket(new byte[516], 516);
                 ds.receive(dp);
-                System.out.println("Réponse reçue !");
+            } //region gestion erreur
+            catch (IOException err) {
+                ds.close();
+                return -3;
+            } //endregion
 
-                data = dp.getData();
+            data = dp.getData();
+
+            //Si c'est la première réception on change le port serveur. (Serveur concurrent)
+            if ( portServ == 69 )
                 portServ = dp.getPort();
-                System.out.println("nouveau port serv : " + portServ);
-                int opcode = getOpcode(data);
 
-                System.out.println("data length = " + data.length);
-                //Traitement réception.
-                if ( opcode == DATA ) {
+            //On récupère l'opcode du packet pour reconnaitre son type.
+            opcode = getOpcode(data);
 
-                    System.out.println("DATA packet reçu !");
+            //System.out.println("Taille datagramme = " + dp.getLength() + " octets.");
+            //Traitement réception.
+            if ( opcode == DATA ) {
 
-                    System.out.println("Numéro de bloc : " + getPacketNumBlock(data));
-                    //On récupère le bout de data qui nous intéresse.
-                    datafile = new byte[data.length - 4];
+                System.out.println("DATA Packet #" + getPacketNumBlock(data) + " reçu.");
+                totalOctetRecu += dp.getLength(); //Pour vérifier notre total
+
+                //On l'écrit dans le fichier le morceau data
+                try {
                     for (int i = 4; i < data.length; i++)
-                        datafile[i-4] = data[i];
-
-
-                    System.out.println("datafile length = " + datafile.length);
-
-                    //On l'écrit dans le fichier
-                    fos.write(datafile, 0, datafile.length);
-
-                    //Si c'était le dernier bout on ferme le fichier.
-                    if ( datafile.length <= 512 ) {
-                        fichierRecu = true;
-                        fos.close();
-                    }
-
-                    //On envoie un ACK de confirmation de reception.
-                    data = createPacketACK(ackNum++);
-                    dp = new DatagramPacket(data, data.length, ipServ, portServ);
-                    ds.send(dp);
-
-                }
-                else if ( opcode == ERROR ) {
-                    System.out.println("ERREUR RECUE ! ");
+                        fos.write(dp.getData()[i]);
+                } //region gestion erreur
+                catch (IOException err) {
+                    err.printStackTrace();
                     ds.close();
                     return -5;
                 }
-                else {
-                    System.out.println("ERREUR packet inconnue !");
-                    System.out.println("opcode = " + opcode);
+                //endregion
+
+                //Si c'était le dernier bout on ferme le fichier et on sors de la boucle.
+                if ( dp.getLength() < 516 ) {
+                    fichierRecu = true;
+
+                    try {
+                        fos.close();
+                    }
+                    //region gestion erreur
+                    catch (IOException err) {
+                        err.printStackTrace();
+                        ds.close();
+                        return -6;
+                    }
+                    //endregion
                 }
 
+                //On envoie un ACK de confirmation de reception.
+                data = createPacketACK(ackNum++);
+                dp = new DatagramPacket(data, data.length, ipServ, portServ);
+
+                try {
+                    ds.send(dp);
+                } //region gestion erreur
+                catch (IOException err) {
+                    err.printStackTrace();
+                    ds.close();
+                    return -2;
+                } //endregion
+
             }
-            catch (IOException err) {
-                System.out.println("Erreur réception réponse !");
-                err.printStackTrace();
+            else if ( opcode == ERROR ) {
+                System.out.println("Packet erreur reçu ! ");
                 ds.close();
-                return -4;
+                return getErrorCode(dp.getData());
+            }
+            else {
+                System.out.println("Packet inconnu !" + " Opcode = " + opcode);
+                return -7;
             }
 
         }
 
-        System.out.println("Fichier reçu !");
+        System.out.println("Fichier reçu ! " + totalOctetRecu + " octets téléchargés.");
         ds.close();
 
         return 0;
 
     }
 
+    public static void messageErreur(int codeErreur) {
+
+        System.out.print("ERREUR : ");
+        switch (codeErreur) {
+            case 0:
+                return; //Déroulement normal.
+            case -7:
+                System.out.println("Erreur reçu datagramme inconnu !");
+                break;
+            case -6:
+                System.out.println("Erreur lors de la fermeture du fichier !");
+                break;
+            case -5:
+                System.out.println("Erreur lors de l'écriture du fichier !");
+                break;
+            case -4:
+                System.out.println("Fichier introuvable !");
+                break;
+            case -3:
+                System.out.println("Erreur lors de la réception d'un datagramme !");
+                break;
+            case -2:
+                System.out.println("Erreur lors de l'envoi du datagramme !");
+                break;
+            case -1:
+                System.out.println("Erreur lors de la création du Socket Client !");
+                break;
+            case ERROR_FILE_NOT_FOUND:
+                System.out.println("fichier introuvable coté serveur !");
+                break;
+            case ERROR_FORBIDDEN_ACCESS:
+                System.out.println("Violation d'accès !");
+                break;
+            case ERROR_DISK_FULL:
+                System.out.println("Disque pleine ou dépassement d'espace alloué !");
+                break;
+            case ERROR_ILLEGAL_TFTP_OP:
+                System.out.println("Opération TFTP illégale !");
+                break;
+            case ERROR_TRANSFERT_ID_UNKNOWN:
+                System.out.println("Transfert ID inconnu !");
+                break;
+            case ERROR_FILE_ALREADY_EXISTS:
+                System.out.println("Le fichier existe déjà !");
+                break;
+            case ERROR_UNKNOWN_USER:
+                System.out.println("Utilisateur inconnu !");
+                break;
+
+        }
+    }
+
     //region Fuction création de Packets
 
     public static int getOpcode(byte[] data) {
         return data[1];
+    }
+
+    public static int getErrorCode(byte[] data) {
+        return data[3];
     }
 
     //Créer un packet de type WRQ
@@ -373,7 +423,6 @@ public class Client {
             String du ErrMsg se terminant par un byte null
          */
 
-        //TODO : GESTION MESSAGES ERREURS
 
         byte[] errMsgBytes = "Erreur".getBytes();
         byte[] packetError = new byte[errMsgBytes.length + 4];
