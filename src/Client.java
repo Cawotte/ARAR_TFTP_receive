@@ -1,5 +1,10 @@
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.sql.SQLOutput;
+import java.util.Scanner;
 
 public class Client {
 
@@ -21,7 +26,7 @@ public class Client {
     static final byte ERROR_6 = 6;
     static final byte ERROR_7 = 7;
 
-    public static void main (String[] args) {
+    public static void main2 (String[] args) {
 
         byte[] RRQPacket = createPacketRRQ("Fichier.txt");
         readRRQ(RRQPacket);
@@ -32,76 +37,198 @@ public class Client {
         createPacketACK(201);
     }
 
-    public static void main2 (String[] args) {
+    public static void main (String[] args) {
 
-        DatagramSocket ds;
-        DatagramPacket dp;
+        Scanner sc = new Scanner(System.in);
+        String str;
 
+        int cr_rv;
         int port;
+
+        InetAddress ipServer;
+
+        try {
+            ipServer = InetAddress.getByName("127.0.0.1");
+        } catch ( IOException err) {
+            System.out.println("Erreur hote inconnus !");
+            err.printStackTrace();
+            return;
+        }
+
+        int portServ = 69;
 
         byte[] data = new byte[1024];
 
         boolean clientOn = true;
 
         //region Initialisation Client
+        /*
         try {
             ds = new DatagramSocket();
             port = ds.getLocalPort();
-            dp = new DatagramPacket(data, data.length);
         } catch (SocketException err) {
-            System.out.println("Erreur création serveur !");
+            System.out.println("Erreur création Client !");
             err.printStackTrace();
             return;
-        }
+        } */
         //endregion
 
+        //Information
+        System.out.println("Serveur cible : " + ipServer.toString() + " : " + portServ);
         //Boucle principale
-        /*
+
         while (clientOn) {
 
+            //On lit l'entrée client
+            System.out.println("Entrez 'quit' pour arrêter le client ou le nom du fichier à obtenir ");
+            str = sc.nextLine();
 
-            //On envoie une requête au serveur :
+            if ( str.equals("quit") ) {
+                clientOn = false;
+            }
+            else {
+                cr_rv = receivefile(str, str, ipServer, portServ);
+                System.out.println("cr_rv = " + cr_rv);
+            }
 
-        }*/
+        }
+
+        //ds.close();
+        sc.close();
+
+        System.out.println("Arrêt du client..");
     }
 
-    public int receivefile(String fileLocal, String fileDistant, String ipAdresse) {
+    public static int receivefile(String fileLocal, String fileDistant, InetAddress ipServ, int portServ) {
 
         DatagramPacket dp;
         DatagramSocket ds;
-        int port;
-        byte[] data = new byte[1024];
+        int ackNum = 1;
+        byte[] data;
+        byte[] datafile;
         InetAddress ip;
+        FileOutputStream fos;
 
+        boolean fichierRecu = false;
         //Creation socket
         try {
-            ip = InetAddress.getByName(ipAdresse);
+            //ip = InetAddress.getByName(ipServ);
             ds = new DatagramSocket();
-            port = ds.getLocalPort();
-            dp = new DatagramPacket(data, data.length);
         } catch (SocketException err) {
             System.out.println("Erreur création socket Client !");
             err.printStackTrace();
             return -1;
-        } catch (UnknownHostException err) {
+        } /*catch (UnknownHostException err) {
             System.out.println("Adresse IP non valide !");
             err.printStackTrace();
             return -2;
-        }
+        }*/
         //endregion
 
+        //On envoie la requête initiale
+
+        //Creation packet RRQ
+        data = createPacketRRQ(fileDistant);
+        dp = new DatagramPacket(data, data.length, ipServ, portServ);
+
+        //Envoie
+        try {
+            ds.send(dp);
+        }
+        catch (IOException err) {
+            System.out.println("Erreur envoie RRQ !");
+            err.printStackTrace();
+            ds.close();
+            return -3;
+        }
+
+        //Ouverture du fichier
+        try {
+            fos = new FileOutputStream(fileLocal);
+        }
+        catch (FileNotFoundException err) {
+            System.out.println("ERREUR fichier non trouvé !");
+            err.printStackTrace();
+            ds.close();
+            return -6;
+        }
+
+        //Reception
+        while ( !fichierRecu ) {
+
+            try {
+                System.out.println("attente reponse");
+                dp = new DatagramPacket(new byte[516], 516);
+                ds.receive(dp);
+                System.out.println("Réponse reçue !");
+
+                data = dp.getData();
+                portServ = dp.getPort();
+                System.out.println("nouveau port serv : " + portServ);
+                int opcode = getOpcode(data);
+
+                System.out.println("data length = " + data.length);
+                //Traitement réception.
+                if ( opcode == DATA ) {
+
+                    System.out.println("DATA packet reçu !");
+
+                    System.out.println("Numéro de bloc : " + getPacketNumBlock(data));
+                    //On récupère le bout de data qui nous intéresse.
+                    datafile = new byte[data.length - 4];
+                    for (int i = 4; i < data.length; i++)
+                        datafile[i-4] = data[i];
 
 
+                    System.out.println("datafile length = " + datafile.length);
 
+                    //On l'écrit dans le fichier
+                    fos.write(datafile, 0, datafile.length);
+
+                    //Si c'était le dernier bout on ferme le fichier.
+                    if ( datafile.length <= 512 ) {
+                        fichierRecu = true;
+                        fos.close();
+                    }
+
+                    //On envoie un ACK de confirmation de reception.
+                    data = createPacketACK(ackNum++);
+                    dp = new DatagramPacket(data, data.length, ipServ, portServ);
+                    ds.send(dp);
+
+                }
+                else if ( opcode == ERROR ) {
+                    System.out.println("ERREUR RECUE ! ");
+                    ds.close();
+                    return -5;
+                }
+                else {
+                    System.out.println("ERREUR packet inconnue !");
+                    System.out.println("opcode = " + opcode);
+                }
+
+            }
+            catch (IOException err) {
+                System.out.println("Erreur réception réponse !");
+                err.printStackTrace();
+                ds.close();
+                return -4;
+            }
+
+        }
+
+        System.out.println("Fichier reçu !");
+        ds.close();
 
         return 0;
 
     }
 
-
-
-
     //region Fuction création de Packets
+
+    public static int getOpcode(byte[] data) {
+        return data[1];
+    }
 
     //Créer un packet de type WRQ
     public static byte[] createPacketRRQ(String filename) {
@@ -141,7 +268,7 @@ public class Client {
         packetRRQ[currentInd] = 0; //byte null de fin de chaine
 
         //Affichage du RRQ Packet (Debug)
-        readRRQ(packetRRQ);
+        //readRRQ(packetRRQ);
 
         return packetRRQ;
 
@@ -201,7 +328,7 @@ public class Client {
             packetACK[i] = numBlockBytes[i-2];
         }
 
-        System.out.println("packet numblock = " + getPacketNumBlock(packetACK));
+        //System.out.println("packet numblock = " + getPacketNumBlock(packetACK));
         return packetACK;
 
     }
