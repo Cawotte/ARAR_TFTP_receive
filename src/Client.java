@@ -3,6 +3,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 @SuppressWarnings("Duplicates")
@@ -37,9 +38,9 @@ public class Client {
         InetAddress ipServer;
 
         try {
-            ipServer = InetAddress.getByName("192.168.43.10"); //Quentin
+            //ipServer = InetAddress.getByName("192.168.43.10"); //Quentin
             //ipServer = InetAddress.getByName("127.0.0.1");
-            //ipServer = InetAddress.getByName("192.168.43.4"); //Fabien
+            ipServer = InetAddress.getByName("192.168.43.4"); //Fabien
             //ipServer = InetAddress.getByName("192.168.43.11"); //Anthony
         } catch ( IOException err) {
             System.out.println("Erreur hote inconnus !");
@@ -47,7 +48,7 @@ public class Client {
             return;
         }
 
-        int portServ = 70;
+        int portServ = 69;
 
         boolean clientOn = true;
 
@@ -165,7 +166,7 @@ public class Client {
 
             } while ( paquetNonRecu );
 
-
+            //On réinitialise les variables pour gérer et compter les timeouts.
             nbEssai = 0;
             paquetNonRecu = false;
 
@@ -247,10 +248,8 @@ public class Client {
 
             }
             else if ( opcode == ERROR ) {
-                System.out.println("Packet erreur reçu ! ");
                 ds.close();
-                //return data[3];
-                //return  ((data[0] & 0xff) << 8) | (data[1] & 0xff);
+                System.out.println("Packet error reçu : " + getErrorMsg(dpReception));
                 return getErrorCode(dpReception.getData());
             }
             else {
@@ -507,6 +506,21 @@ public class Client {
     public static int getErrorCode(byte[] data) {
         //return data[3];
         return  data[3] & 0xFF | (data[2] & 0xFF) << 8;
+    }
+
+    public static String getErrorMsg(DatagramPacket dp) {
+
+        byte[] data = dp.getData();
+        byte[] errorBytes = new byte[dp.getLength() - 4];
+
+        for (int i = 4; i < dp.getLength(); i++) {
+            errorBytes[i-4] = data[i];
+        }
+
+        String msgError  = new String(errorBytes, StandardCharsets.UTF_8);
+
+        return msgError;
+
     }
 
 
