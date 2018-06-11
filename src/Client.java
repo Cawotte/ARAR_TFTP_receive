@@ -81,7 +81,7 @@ public class Client {
         System.out.println("Arrêt du client..");
     }
 
-    public static int receivefile(String fileLocal, String fileDistant, InetAddress ipServ, int portServ) {
+    private static int receivefile(String fileLocal, String fileDistant, InetAddress ipServ, int portServ) {
 
         DatagramPacket dp;
         DatagramPacket dpReception = new DatagramPacket(new byte[516], 516);
@@ -266,7 +266,7 @@ public class Client {
 
     }
 
-    public static void messageErreur(int codeErreur) {
+    private static void messageErreur(int codeErreur) {
 
         System.out.print("ERREUR : ");
         switch (codeErreur) {
@@ -323,12 +323,12 @@ public class Client {
 
     //region Fuction création de Packets
 
-    public static int getOpcode(byte[] data) {
+    private static int getOpcode(byte[] data) {
         return data[1];
     }
 
     //Créer un packet de type WRQ
-    public static byte[] createPacketRRQ(String filename) {
+    private static byte[] createPacketRRQ(String filename) {
 
         /*
             2 premiers Octet : Opcode = 1
@@ -403,7 +403,7 @@ public class Client {
     }
 
     //Crée un packet ACK
-    public static byte[] createPacketACK(int numBlock) {
+    private static byte[] createPacketACK(int numBlock) {
         /*
         Packet ACK
             Opcode = 4 sur les deux premiers octets
@@ -492,7 +492,7 @@ public class Client {
     //endregion
 
     //Renvoie le numéro de bloc du packets ACK ou DATA donné en argument.
-    public static int getPacketNumBlock(byte[] packet) {
+    private static int getPacketNumBlock(byte[] packet) {
 
         //Gestion erreur par opcode
         if ( packet[1] != ACK && packet[1] != DATA ) {
@@ -503,12 +503,12 @@ public class Client {
         return  packet[3] & 0xFF | (packet[2] & 0xFF) << 8;
     }
 
-    public static int getErrorCode(byte[] data) {
+    private static int getErrorCode(byte[] data) {
         //return data[3];
         return  data[3] & 0xFF | (data[2] & 0xFF) << 8;
     }
 
-    public static String getErrorMsg(DatagramPacket dp) {
+    private static String getErrorMsg(DatagramPacket dp) {
 
         byte[] data = dp.getData();
         byte[] errorBytes = new byte[dp.getLength() - 4];
@@ -517,9 +517,7 @@ public class Client {
             errorBytes[i-4] = data[i];
         }
 
-        String msgError  = new String(errorBytes, StandardCharsets.UTF_8);
-
-        return msgError;
+        return new String(errorBytes, StandardCharsets.UTF_8);
 
     }
 
@@ -532,14 +530,14 @@ public class Client {
     }
 
     //Convertie un short en un tableau de 2 octets
-    public static byte[] shortToBytes(short value) {
+    private static byte[] shortToBytes(short value) {
         ByteBuffer bb = ByteBuffer.allocate(2);
         bb.putShort(value);
         return bb.array();
     }
 
     //Convertie un int en un tableau de 2 octets
-    public static byte[] intToSmallBytes(int value) {
+    private static byte[] intToSmallBytes(int value) {
         return shortToBytes((short)value);
     }
 }
