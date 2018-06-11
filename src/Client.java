@@ -37,14 +37,17 @@ public class Client {
         InetAddress ipServer;
 
         try {
-            ipServer = InetAddress.getByName("127.0.0.1");
+            ipServer = InetAddress.getByName("192.168.43.10"); //Quentin
+            //ipServer = InetAddress.getByName("127.0.0.1");
+            //ipServer = InetAddress.getByName("192.168.43.4"); //Fabien
+            //ipServer = InetAddress.getByName("192.168.43.11"); //Anthony
         } catch ( IOException err) {
             System.out.println("Erreur hote inconnus !");
             err.printStackTrace();
             return;
         }
 
-        int portServ = 69;
+        int portServ = 70;
 
         boolean clientOn = true;
 
@@ -80,8 +83,9 @@ public class Client {
     public static int receivefile(String fileLocal, String fileDistant, InetAddress ipServ, int portServ) {
 
         DatagramPacket dp;
+        DatagramPacket dpReception = new DatagramPacket(new byte[516], 516);
         DatagramSocket ds;
-        FileOutputStream fos;
+        FileOutputStream fos = null;
 
         int ackNum = 1;
         int totalOctetRecu = 0;
@@ -89,6 +93,9 @@ public class Client {
         byte[] data;
 
         boolean fichierRecu = false;
+        boolean paquetNonRecu = false;
+        boolean reponseRRQrecu = false;
+        int nbEssai = 0;
 
         //Creation socket
         try {
@@ -107,6 +114,7 @@ public class Client {
 
         //Envoie
         try {
+            ds.setSoTimeout(5000); //Timeout plutot long pour le RRQ.
             ds.send(dp);
         } //region gestion erreur
         catch (IOException err) {
@@ -115,37 +123,57 @@ public class Client {
             return -2;
         } //endregion
 
-        //Ouverture du fichier
-        try {
-            fos = new FileOutputStream("data/" + fileLocal);
-        } //region gestion erreur
-        catch (FileNotFoundException err) {
-            //System.out.println("ERREUR fichier non trouvé !");
-            err.printStackTrace();
-            ds.close();
-            return -4;
-        } //endregion
 
         //Reception
         while ( !fichierRecu ) {
 
-            try {
+            //Boucle réception
+            do {
+                try {
 
-                //byte[] dataReceive = new byte[516];
-                System.out.println("Attente packet...");
-                dp = new DatagramPacket(new byte[516], 516);
-                ds.receive(dp);
-            } //region gestion erreur
-            catch (IOException err) {
-                ds.close();
-                return -3;
-            } //endregion
+                    System.out.println("Attente packet...");
+                    dpReception = new DatagramPacket(new byte[516], 516);
+                    ds.receive(dpReception);
 
-            data = dp.getData();
+                }
+                catch (SocketTimeoutException err) {
+                    //Si il y a eu un timeout à la réception
+                    paquetNonRecu = true;
+
+                    nbEssai++;
+                    //Erreur timeout
+                    if ( nbEssai > 3) {
+                        ds.close();
+                        return -8;
+                    }
+
+                    //On renvoie le paquet précédent
+                    System.out.println("Timeout reception ! On renvoie le paquet...");
+                    try {
+                        ds.send(dp);
+                    }
+                    catch (IOException error) {
+                        ds.close();
+                        return -3;
+                    }
+                }
+                //region gestion erreur
+                catch (IOException err) {
+                    ds.close();
+                    return -3;
+                } //endregion
+
+            } while ( paquetNonRecu );
+
+
+            nbEssai = 0;
+            paquetNonRecu = false;
+
+            data = dpReception.getData();
 
             //Si c'est la première réception on change le port serveur. (Serveur concurrent)
             if ( portServ == 69 )
-                portServ = dp.getPort();
+                portServ = dpReception.getPort();
 
             //On récupère l'opcode du packet pour reconnaitre son type.
             opcode = getOpcode(data);
@@ -155,12 +183,31 @@ public class Client {
             if ( opcode == DATA ) {
 
                 System.out.println("DATA Packet #" + getPacketNumBlock(data) + " reçu.");
-                totalOctetRecu += dp.getLength(); //Pour vérifier notre total
+                totalOctetRecu += dpReception.getLength(); //Pour vérifier notre total
+
+                //Si c'est la réponse à notre tout premier paquet, RRQ, on ouvre le fichier
+                if ( !reponseRRQrecu ) {
+
+                    //Ouverture du fichier
+                    try {
+                        fos = new FileOutputStream("data/" + fileLocal);
+                    } //region gestion erreur
+                    catch (FileNotFoundException err) {
+                        //System.out.println("ERREUR fichier non trouvé !");
+                        err.printStackTrace();
+                        ds.close();
+                        return -4;
+                    } //endregion
+
+                    try { ds.setSoTimeout(500); } catch (SocketException err) {}
+
+                    reponseRRQrecu = true;
+                }
 
                 //On l'écrit dans le fichier le morceau data
                 try {
                     for (int i = 4; i < data.length; i++)
-                        fos.write(dp.getData()[i]);
+                        fos.write(dpReception.getData()[i]);
                 } //region gestion erreur
                 catch (IOException err) {
                     err.printStackTrace();
@@ -170,7 +217,7 @@ public class Client {
                 //endregion
 
                 //Si c'était le dernier bout on ferme le fichier et on sors de la boucle.
-                if ( dp.getLength() < 516 ) {
+                if ( dpReception.getLength() < 516 ) {
                     fichierRecu = true;
 
                     try {
@@ -202,7 +249,9 @@ public class Client {
             else if ( opcode == ERROR ) {
                 System.out.println("Packet erreur reçu ! ");
                 ds.close();
-                return getErrorCode(dp.getData());
+                //return data[3];
+                //return  ((data[0] & 0xff) << 8) | (data[1] & 0xff);
+                return getErrorCode(dpReception.getData());
             }
             else {
                 System.out.println("Packet inconnu !" + " Opcode = " + opcode);
@@ -223,7 +272,10 @@ public class Client {
         System.out.print("ERREUR : ");
         switch (codeErreur) {
             case 0:
-                return; //Déroulement normal.
+                return; //
+            case -8:
+                System.out.println("Timeout ! 3 paquets envoyés sans réponses !");
+                break;
             case -7:
                 System.out.println("Erreur reçu datagramme inconnu !");
                 break;
@@ -274,10 +326,6 @@ public class Client {
 
     public static int getOpcode(byte[] data) {
         return data[1];
-    }
-
-    public static int getErrorCode(byte[] data) {
-        return data[3];
     }
 
     //Créer un packet de type WRQ
@@ -455,6 +503,12 @@ public class Client {
 
         return  packet[3] & 0xFF | (packet[2] & 0xFF) << 8;
     }
+
+    public static int getErrorCode(byte[] data) {
+        //return data[3];
+        return  data[3] & 0xFF | (data[2] & 0xFF) << 8;
+    }
+
 
     //Convertie un integer en un tableau de 4 octets
     public static byte[] intToBytes(int value) {
